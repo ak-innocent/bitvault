@@ -265,3 +265,89 @@
     )
   )
 )
+
+;; LIQUIDATION ENGINE
+
+;; Automated Liquidation System - Protecting Bitcoin L2 protocol solvency
+;; Enables third parties to liquidate unhealthy positions for profit
+;; Critical mechanism for maintaining overall protocol health and stability
+(define-public (liquidate-position (target-account principal))
+  (let (
+      (target-portfolio (unwrap! (map-get? account-portfolios { account: target-account })
+        E_POSITION_NOT_FOUND
+      ))
+      (collateral-at-risk (get total-stx-collateral target-portfolio))
+      (debt-exposure (get total-stx-debt target-portfolio))
+      (current-health-ratio (compute-health-ratio collateral-at-risk debt-exposure))
+    )
+    ;; Prevent self-liquidation and ensure position has debt
+    (asserts! (not (is-eq target-account tx-sender)) E_UNAUTHORIZED_ACCESS)
+    (asserts! (> debt-exposure u0) E_AMOUNT_INVALID)
+
+    ;; Execute liquidation if position is underwater
+    (if (< current-health-ratio (var-get liquidation-boundary))
+      (begin
+        ;; Transfer seized collateral to liquidator as reward
+        (try! (as-contract (stx-transfer? collateral-at-risk (as-contract tx-sender) tx-sender)))
+        ;; Remove liquidated position from protocol state
+        (map-delete account-portfolios { account: target-account })
+        ;; Update global protocol metrics
+        (var-set aggregate-collateral
+          (- (var-get aggregate-collateral) collateral-at-risk)
+        )
+        (var-set aggregate-debt (- (var-get aggregate-debt) debt-exposure))
+        (ok true)
+      )
+      E_LIQUIDATION_UNAVAILABLE
+    )
+  )
+)
+
+;; PUBLIC DATA ACCESSORS
+
+;; User Portfolio Query - Real-time position monitoring for Bitcoin L2 users
+;; Provides comprehensive view of user's lending position and exposure
+(define-read-only (get-account-portfolio (account principal))
+  (default-to {
+    total-stx-collateral: u0,
+    total-stx-debt: u0,
+    active-positions: u0,
+  }
+    (map-get? account-portfolios { account: account })
+  )
+)
+
+;; Protocol Health Dashboard - System-wide metrics for Bitcoin L2 DeFi
+;; Essential data for protocol monitoring and risk assessment
+(define-read-only (get-protocol-metrics)
+  {
+    total-stx-collateral: (var-get aggregate-collateral),
+    total-stx-debt: (var-get aggregate-debt),
+    collateral-requirement: (var-get collateral-requirement),
+    liquidation-boundary: (var-get liquidation-boundary),
+    treasury-fee: (var-get protocol-treasury-fee),
+    utilization-rate: (if (> (var-get aggregate-collateral) u0)
+      (/ (* (var-get aggregate-debt) u100) (var-get aggregate-collateral))
+      u0
+    ),
+  }
+)
+
+;; Position Health Calculator - Real-time risk assessment utility
+;; Calculates current health ratio for any account's lending position
+(define-read-only (calculate-position-health (account principal))
+  (let (
+      (portfolio (get-account-portfolio account))
+      (collateral (get total-stx-collateral portfolio))
+      (debt (get total-stx-debt portfolio))
+    )
+    {
+      health-ratio: (compute-health-ratio collateral debt),
+      liquidation-risk: (< (compute-health-ratio collateral debt) (var-get liquidation-boundary)),
+      available-to-borrow: (if (> collateral u0)
+        (- (/ (* collateral u100) (var-get collateral-requirement)) debt)
+        u0
+      ),
+    }
+  )
+)
