@@ -182,3 +182,86 @@
           (var-get collateral-requirement)
         )
       )
+      (begin
+        ;; Transfer borrowed STX to user
+        (try! (as-contract (stx-transfer? requested-amount (as-contract tx-sender) tx-sender)))
+        ;; Update protocol debt tracking
+        (var-set aggregate-debt (+ (var-get aggregate-debt) requested-amount))
+        ;; Record user's increased debt position
+        (update-account-portfolio tx-sender u0 true requested-amount true)
+        (ok requested-amount)
+      )
+      E_COLLATERAL_INSUFFICIENT
+    )
+  )
+)
+
+;; Debt Repayment System - Reduce borrowing exposure on Bitcoin L2
+;; Allows users to repay borrowed STX and improve their health factor
+;; Essential for maintaining good standing in the protocol
+(define-public (repay-debt (repayment-amount uint))
+  (let (
+      (user-portfolio (default-to {
+        total-stx-collateral: u0,
+        total-stx-debt: u0,
+        active-positions: u0,
+      }
+        (map-get? account-portfolios { account: tx-sender })
+      ))
+      (outstanding-debt (get total-stx-debt user-portfolio))
+    )
+    (if (<= repayment-amount outstanding-debt)
+      (begin
+        ;; Transfer repayment STX to protocol
+        (try! (stx-transfer? repayment-amount tx-sender (as-contract tx-sender)))
+        ;; Reduce global debt counter
+        (var-set aggregate-debt (- (var-get aggregate-debt) repayment-amount))
+        ;; Update user's debt position
+        (update-account-portfolio tx-sender u0 true repayment-amount false)
+        (ok repayment-amount)
+      )
+      E_AMOUNT_INVALID
+    )
+  )
+)
+
+;; Collateral Withdrawal - Reclaim STX from Bitcoin L2 protocol
+;; Enables users to withdraw excess collateral while maintaining health factor
+;; Critical for capital efficiency in DeFi operations
+(define-public (withdraw-collateral (withdrawal-amount uint))
+  (let (
+      (user-portfolio (default-to {
+        total-stx-collateral: u0,
+        total-stx-debt: u0,
+        active-positions: u0,
+      }
+        (map-get? account-portfolios { account: tx-sender })
+      ))
+      (available-collateral (get total-stx-collateral user-portfolio))
+      (outstanding-debt (get total-stx-debt user-portfolio))
+    )
+    (if (and
+        (<= withdrawal-amount available-collateral)
+        ;; Ensure remaining collateral supports existing debt
+        (>=
+          (compute-health-ratio (- available-collateral withdrawal-amount)
+            outstanding-debt
+          )
+          (var-get collateral-requirement)
+        )
+      )
+      (begin
+        ;; Return STX collateral to user
+        (try! (as-contract (stx-transfer? withdrawal-amount (as-contract tx-sender) tx-sender)))
+        ;; Update protocol collateral tracking
+        (var-set aggregate-collateral
+          (- (var-get aggregate-collateral) withdrawal-amount)
+        )
+        ;; Adjust user's collateral position
+        (update-account-portfolio tx-sender withdrawal-amount false u0 true)
+        (ok withdrawal-amount)
+      )
+      E_COLLATERAL_INSUFFICIENT
+    )
+  )
+)
