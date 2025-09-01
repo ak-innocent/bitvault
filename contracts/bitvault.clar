@@ -86,3 +86,99 @@
     accumulated-interest
   )
 )
+
+;; Health Factor Calculator - Risk assessment for lending positions
+;; Returns collateralization ratio as percentage (e.g., 150 = 150%)
+(define-private (compute-health-ratio
+    (collateral-value uint)
+    (outstanding-debt uint)
+  )
+  (if (is-eq outstanding-debt u0)
+    u0 ;; No debt means infinite health ratio
+    (/ (* collateral-value u100) outstanding-debt)
+  )
+)
+
+;; Portfolio State Manager - Efficient user position updates
+;; Handles both collateral and debt adjustments in a single atomic operation
+(define-private (update-account-portfolio
+    (account principal)
+    (collateral-change uint)
+    (is-collateral-deposit bool)
+    (debt-change uint)
+    (is-debt-increase bool)
+  )
+  (let (
+      (current-portfolio (default-to {
+        total-stx-collateral: u0,
+        total-stx-debt: u0,
+        active-positions: u0,
+      }
+        (map-get? account-portfolios { account: account })
+      ))
+      (updated-collateral (if is-collateral-deposit
+        (+ (get total-stx-collateral current-portfolio) collateral-change)
+        (- (get total-stx-collateral current-portfolio) collateral-change)
+      ))
+      (updated-debt (if is-debt-increase
+        (+ (get total-stx-debt current-portfolio) debt-change)
+        (- (get total-stx-debt current-portfolio) debt-change)
+      ))
+    )
+    (map-set account-portfolios { account: account } {
+      total-stx-collateral: updated-collateral,
+      total-stx-debt: updated-debt,
+      active-positions: (get active-positions current-portfolio),
+    })
+  )
+)
+
+;; CORE PROTOCOL OPERATIONS
+
+;; STX Collateral Deposit - Gateway to Bitcoin L2 lending
+;; Locks user's entire STX balance as collateral for future borrowing
+;; Enables capital efficiency while maintaining protocol security
+(define-public (deposit-collateral)
+  (let ((stx-balance (stx-get-balance tx-sender)))
+    (if (> stx-balance u0)
+      (begin
+        ;; Transfer STX to protocol custody
+        (try! (stx-transfer? stx-balance tx-sender (as-contract tx-sender)))
+        ;; Update global protocol metrics
+        (var-set aggregate-collateral
+          (+ (var-get aggregate-collateral) stx-balance)
+        )
+        ;; Record user's new collateral position
+        (update-account-portfolio tx-sender stx-balance true u0 true)
+        (ok stx-balance)
+      )
+      E_AMOUNT_INVALID
+    )
+  )
+)
+
+;; STX Borrowing Engine - Unlock liquidity from Bitcoin L2 collateral
+;; Enables users to borrow STX against their deposited collateral
+;; Maintains strict over-collateralization for protocol solvency
+(define-public (borrow-stx (requested-amount uint))
+  (let (
+      (user-portfolio (default-to {
+        total-stx-collateral: u0,
+        total-stx-debt: u0,
+        active-positions: u0,
+      }
+        (map-get? account-portfolios { account: tx-sender })
+      ))
+      (available-collateral (get total-stx-collateral user-portfolio))
+      (existing-debt (get total-stx-debt user-portfolio))
+    )
+    (if (and
+        (> requested-amount u0)
+        ;; Ensure new position maintains healthy collateralization
+        (>=
+          (compute-health-ratio available-collateral
+            (+ existing-debt requested-amount)
+          )
+          (var-get collateral-requirement)
+        )
+      )
