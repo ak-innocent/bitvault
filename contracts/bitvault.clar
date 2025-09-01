@@ -351,3 +351,65 @@
     }
   )
 )
+
+;; GOVERNANCE & ADMINISTRATION
+
+;; Collateral Ratio Governance - Bitcoin L2 risk parameter management
+;; Allows protocol owner to adjust minimum collateralization requirements
+;; Critical for adapting to market conditions and maintaining protocol safety
+(define-public (update-collateral-requirement (new-ratio uint))
+  (begin
+    (asserts! (is-eq tx-sender PROTOCOL_OWNER) E_UNAUTHORIZED_ACCESS)
+    (asserts!
+      (and
+        (>= new-ratio COLLATERAL_RATIO_FLOOR)
+        (<= new-ratio COLLATERAL_RATIO_CEILING)
+      )
+      E_PARAMETER_OUT_OF_BOUNDS
+    )
+    (var-set collateral-requirement new-ratio)
+    (print {
+      event: "collateral-requirement-updated",
+      new-value: new-ratio,
+    })
+    (ok true)
+  )
+)
+
+;; Liquidation Threshold Governance - Fine-tuning protocol safety mechanisms
+;; Controls when positions become eligible for liquidation
+;; Must maintain logical relationship with collateral requirements
+(define-public (update-liquidation-boundary (new-threshold uint))
+  (begin
+    (asserts! (is-eq tx-sender PROTOCOL_OWNER) E_UNAUTHORIZED_ACCESS)
+    (asserts!
+      (and
+        (>= new-threshold COLLATERAL_RATIO_FLOOR)
+        (<= new-threshold (var-get collateral-requirement))
+      )
+      E_PARAMETER_OUT_OF_BOUNDS
+    )
+    (var-set liquidation-boundary new-threshold)
+    (print {
+      event: "liquidation-boundary-updated",
+      new-value: new-threshold,
+    })
+    (ok true)
+  )
+)
+
+;; Protocol Economics Management - Sustainable fee structure for Bitcoin L2
+;; Adjusts treasury fees to balance protocol sustainability and user adoption
+;; Revenue mechanism for protocol development and maintenance
+(define-public (update-protocol-fee (new-fee-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender PROTOCOL_OWNER) E_UNAUTHORIZED_ACCESS)
+    (asserts! (<= new-fee-rate PROTOCOL_FEE_CEILING) E_PARAMETER_OUT_OF_BOUNDS)
+    (var-set protocol-treasury-fee new-fee-rate)
+    (print {
+      event: "protocol-fee-updated",
+      new-rate: new-fee-rate,
+    })
+    (ok true)
+  )
+)
